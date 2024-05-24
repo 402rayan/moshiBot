@@ -28,6 +28,8 @@ class Database:
         self.create_activity_table()
 
     def insert_user(self, discord_id, discord_name):
+        if self.getUser(discord_id) is not None:
+            return
         self.cursor.execute(
             'INSERT INTO users (discord_id, discord_name) VALUES (?, ?)', (discord_id, discord_name))
         self.conn.commit()
@@ -46,3 +48,37 @@ class Database:
         self.cursor.execute(
             'SELECT * FROM topics WHERE topic_name = ?', (topic_name,))
         return self.cursor.fetchone()
+
+    def get_topic_levenshtein(self, topic_name):
+        # Get the topic by iterating 3 times over the topics
+        # 1 st time is EXACT MATCH
+        # 2 nd time is LEVENSHTEIN DISTANCE 1
+        # 3 rd time is topic_name in topic_name
+        self.cursor.execute(
+            'SELECT * FROM topics WHERE topic_name = ?', (topic_name,))
+        result = self.cursor.fetchone()
+        if result:
+            return result
+        self.cursor.execute(
+            'SELECT * FROM topics WHERE topic_name LIKE ?', (f'%{topic_name}%',))
+        result = self.cursor.fetchone()
+        if result:
+            return result
+        self.cursor.execute(
+            'SELECT * FROM topics')
+        topics = self.cursor.fetchall()
+        for topic in topics:
+            if topic_name in topic[1]:
+                return topic
+        return None
+    
+    def insert_activity(self, date, duree, id_topic, id_discord_user):
+        self.cursor.execute(
+            'INSERT INTO activities (date, duree, id_topic, id_discord_user) VALUES (?, ?, ?, ?)', (date, duree, id_topic, id_discord_user))
+        self.conn.commit()
+        return self.cursor.lastrowid
+    
+    def get_activities(self, id_discord_user, date_debut):
+        self.cursor.execute(
+            'SELECT * FROM activities a JOIN topics t ON t.id = a.id_topic WHERE id_discord_user = ? AND date >= ?', (id_discord_user, date_debut))
+        return self.cursor.fetchall()

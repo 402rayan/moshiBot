@@ -1,4 +1,6 @@
 import asyncio
+import datetime
+import io
 import getToken
 import discord
 from discord.ext import commands
@@ -6,6 +8,7 @@ import random
 import loguru
 from backend import Database
 from constantes import CONSTANTS
+import matplotlib.pyplot as plt
 
 # Create a Discord client instance and set the command prefix
 intents = discord.Intents.all()
@@ -69,7 +72,7 @@ async def new(message, userFromDb):
     # Check if the sujet already exists
     topic = database.get_topic(sujet)
     if topic:
-        await message.channel.send(f"Le sujet '{sujet}' existe déjà.")
+        await message.channel.send(embed=embed_erreur("Sujet déjà existant", f"Le sujet '{sujet}' existe déjà."))
         return
     a = await ajouter_sujet(message, userFromDb, sujet)
     
@@ -92,18 +95,173 @@ async def ajouter_sujet(message, userFromDb, sujet):
         reaction, _ = await bot.wait_for("reaction_add", timeout=35, check=check)
         if str(reaction.emoji) == "✅":
             database.insert_topic(sujet)
-            await message.channel.send(f"Le sujet '{sujet}' a été ajouté avec succès.")
+            await message.channel.send(embed=embed_succes("Sujet ajouté", f"Le sujet '{sujet}' a été ajouté."))
             return database.get_topic(sujet)
         else:
-            await message.channel.send("Opération annulée.")
+            await message.channel.send(embed=embed_erreur("Opération annulée", "Le sujet n'a pas été ajouté."))
             return False
     except asyncio.TimeoutError:
-        await message.channel.send("La validation a expiré. Opération annulée.")
+        await message.channel.send(embed_erreur("Validation expirée", "Le sujet n'a pas été ajouté."))
         return False
     
 @bot.command()
 async def info_sujet(message, userFromDb):
     pass
+
+@bot.command()
+async def add_activity(message, userFromDb):
+    # Le message est sous la forme ".add <sujet>, duree"
+    # La duree est en minutes
+    contenu = message.content.split(',')
+    if len(contenu) != 2:
+        await message.channel.send(embed=embed_erreur("Arguments invalides", "La commande doit être de la forme `.add <sujet>, duree`."))
+        return
+    sujet = contenu[0].split(' ')[1]
+    duree = contenu[1].strip()
+    if not duree.isdigit():
+        await message.channel.send(embed=embed_erreur("Durée invalide", "La durée doit être un nombre entier."))
+        return
+    if int(duree) <= 0:
+        await message.channel.send(embed=embed_erreur("Durée invalide", "La durée doit être un nombre entier positif."))
+        return
+    if int(duree) > 1440:
+        await message.channel.send(embed=embed_erreur("Durée invalide", "La durée ne peut pas dépasser 1440 minutes (24 heures)."))
+        return
+    if int(duree) % 5 != 0:
+        await message.channel.send(embed=embed_erreur("Durée invalide", "La durée doit être un multiple de 5 minutes."))
+        return
+    logger.info(f"Commande !add_activity appelée par {message.author.name} ({message.author.id}).")
+    # Check if the sujet already exists
+    topic = database.get_topic_levenshtein(sujet)
+    if not topic:
+        await message.channel.send(embed=embed_erreur("Sujet inconnu", f"Le sujet '{sujet}' n'existe pas.","Vous pouvez ajouter un sujet avec la commande `.new <sujet>`."))
+        return
+    a = await ajouter_activite(message, userFromDb, topic, duree)
+    
+@bot.command()
+async def ajouter_activite(message, userFromDb, topic, duree):
+    # Envoie un embed de validation pour être sur que l'utilisateur veut ajouter l'activité
+    transition = "de l'" if topic[1][0] in "aeiou" else "du"
+    embed = discord.Embed(
+        title="Ajouter une activité",
+        description=f"Avez-vous passé `{duree} minutes` à effectuer {transition} `{topic[1]}` ? ",
+        color=discord.Color.blurple()
+    )
+    embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
+    embed.set_footer(text="✅ : confirmer ❌ : annuler.")
+    sent_message = await message.channel.send(embed=embed)
+    await sent_message.add_reaction("✅")
+    await sent_message.add_reaction("❌")
+    def check(reaction, user):
+        return user == message.author and str(reaction.emoji) in ["✅", "❌"]
+    try:
+        reaction, _ = await bot.wait_for("reaction_add", timeout=35, check=check)
+        if str(reaction.emoji) == "✅":
+            date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            r = database.insert_activity(date,duree,topic[0], userFromDb[1])
+            await message.channel.send(embed=embed_succes("Activité ajoutée", f"Vous avez passé {duree} minutes à effectuer {transition} '{topic[1]}'."))
+            return r
+        else:
+            await message.channel.send(embed=embed_erreur("Opération annulée", "L'activité n'a pas été ajoutée."))
+            return False
+    except asyncio.TimeoutError:
+        await message.channel.send(embed_erreur("Validation expirée", "L'activité n'a pas été ajoutée."))
+        return False
+
+@bot.command()
+async def daily(message, userFromDb):
+    date_debut = datetime.datetime.now().strftime("%Y-%m-%d 00:00:00")
+    await graphe_activites(message, userFromDb, date_debut, "de la journée")
+
+@bot.command()
+async def weekly(message, userFromDb):
+    date_debut = (datetime.datetime.now() - datetime.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    await graphe_activites(message, userFromDb, date_debut, "de la semaine dernière")
+
+@bot.command()
+async def monthly(message, userFromDb):
+    date_debut = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    await graphe_activites(message, userFromDb, date_debut, "du mois dernier")
+    
+@bot.command()
+async def last_days(message, userFromDb):
+    # Parse the message to get the number of days
+    nombre = message.content.split(' ')[1]
+    try:
+        nombre = int(nombre)
+    except ValueError:
+        await message.channel.send(embed=embed_erreur("Nombre invalide", "Le nombre de jours doit être un entier."))
+        return
+    if nombre <= 0:
+        await message.channel.send(embed=embed_erreur("Nombre invalide", "Le nombre de jours doit être un entier positif."))
+        return
+    date_debut = (datetime.datetime.now() - datetime.timedelta(days=nombre)).strftime("%Y-%m-%d %H:%M:%S")
+    await graphe_activites(message, userFromDb, date_debut, f"des {nombre} derniers jours")
+
+@bot.command()
+async def graphe_activites(message, userFromDb, date_debut, libelle=""):
+    # Retourne un graphe des activités de l'utilisateur à partir de la date de début
+    activites = database.get_activities(userFromDb[1], date_debut)
+    print(activites)
+    if not activites:
+        await message.channel.send(embed_erreur("Aucune activité", "Aucune activité trouvée pour cet utilisateur à partir de la date spécifiée."))
+        return
+    duree_par_activite = {}
+    for activite in activites:
+        if activite[6] not in duree_par_activite:
+            print(activite[3], " n'existe pas dans le dictionnaire")
+            duree_par_activite[activite[6]] = 0
+        print(duree_par_activite, activite[6], activite[2])
+        duree_par_activite[activite[6]] += activite[2]
+        print(duree_par_activite, activite[6], activite[2])
+    # Créer un graphique à barres pour les activités
+    print(duree_par_activite)
+    plt.figure(figsize=(10, 6))
+    plt.barh(list(duree_par_activite.keys()), list(duree_par_activite.values()), color='#452fd6')
+    plt.xlabel("Durée (minutes)", labelpad=10, fontsize=12, fontweight='bold', color='#333333')
+    plt.ylabel("Sujet", labelpad=10, fontsize=12, fontweight='bold', color='#333333')
+    plt.title("Activités " + libelle)
+    plt.xticks(rotation=15)
+    plt.tight_layout()
+    
+    # Sauvegarder le graphique dans un objet BytesIO
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()  # Fermer la figure pour libérer la mémoire
+
+    # Envoyer le fichier image sur Discord
+    file = discord.File(buf, filename='graph.png')
+    embed = discord.Embed(
+        title="Activités " + libelle,
+        description="",
+        color=discord.Color.blurple()
+    )
+    embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
+    embed.set_image(url="attachment://graph.png")
+    await message.channel.send(file=file, embed=embed)
+
+
+def embed_succes(titre, description):
+    return embed(titre, description, discord.Color.green())
+
+def embed_erreur(titre, description,footer=None):
+    return embed(titre, description, discord.Color.red(), footer=footer if footer else None)
+
+def embed(titre="", description="", couleur=discord.Color.blurple(), author=None, footer=None):
+    embed = discord.Embed(
+        title=titre,
+        description=description,
+        color=couleur
+    )
+    if footer is not None:
+        embed.set_footer(text=footer)
+    if author is None:
+        embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
+    else:
+        embed.set_author(name=author.name, icon_url=author.avatar.url)
+    return embed
+    
 
 @bot.command()
 async def list_command(message, userFromDb):
@@ -170,6 +328,11 @@ commands = {
     "h" : list_command, # Commande d'aide
     "ne" : new, # Commande pour ajouter un sujet
     "i" : info_sujet, # Commande pour voir un sujet
+    "ad": add_activity, # Commande pour ajouter une activité
+    "da": daily, # Commande pour voir les activités de la journée
+    "we": weekly, # Commande pour voir les activités de la semaine
+    "mo": monthly, # Commande pour voir les activités du mois
+    "la": last_days, # Commande pour voir les activités des derniers jours
 }
 
 # Run the bot with the token
