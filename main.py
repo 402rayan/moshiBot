@@ -62,6 +62,50 @@ async def on_message(message):
 
 
 @bot.command()
+async def new(message, userFromDb):
+    # Parse the message to get the sujet
+    sujet = message.content.split(' ')[1]
+    logger.info(f"Commande !new appelée par {message.author.name} ({message.author.id}).")
+    # Check if the sujet already exists
+    topic = database.get_topic(sujet)
+    if topic:
+        await message.channel.send(f"Le sujet '{sujet}' existe déjà.")
+        return
+    a = await ajouter_sujet(message, userFromDb, sujet)
+    
+
+async def ajouter_sujet(message, userFromDb, sujet):
+    # Envoie un embed de validation pour être sur que l'utilisateur veut ajouter le sujet
+    embed = discord.Embed(
+        title="Ajouter un sujet",
+        description=f"Voulez-vous vraiment ajouter le sujet `{sujet}` ?",
+        color=discord.Color.blurple()
+    )
+    embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
+    embed.set_footer(text="✅ : confirmer ❌ : annuler.")
+    sent_message = await message.channel.send(embed=embed)
+    await sent_message.add_reaction("✅")
+    await sent_message.add_reaction("❌")
+    def check(reaction, user):
+        return user == message.author and str(reaction.emoji) in ["✅", "❌"]
+    try:
+        reaction, _ = await bot.wait_for("reaction_add", timeout=35, check=check)
+        if str(reaction.emoji) == "✅":
+            database.insert_topic(sujet)
+            await message.channel.send(f"Le sujet '{sujet}' a été ajouté avec succès.")
+            return database.get_topic(sujet)
+        else:
+            await message.channel.send("Opération annulée.")
+            return False
+    except asyncio.TimeoutError:
+        await message.channel.send("La validation a expiré. Opération annulée.")
+        return False
+    
+@bot.command()
+async def info_sujet(message, userFromDb):
+    pass
+
+@bot.command()
 async def list_command(message, userFromDb):
     logger.info(f"Commande !list_command appelée par {message.author.name} ({message.author.id}).")
 
@@ -105,7 +149,7 @@ async def list_command(message, userFromDb):
 
     while True:
         try:
-            reaction, _ = await bot.wait_for("reaction_add", timeout=35, check=check)
+            reaction, _ = await bot.wait_for("reaction_add", timeout=5, check=check)
             
             # Gérer la réaction pour passer à la page précédente
             if str(reaction.emoji) == "⬅️":
@@ -124,6 +168,8 @@ async def list_command(message, userFromDb):
 
 commands = {
     "h" : list_command, # Commande d'aide
+    "ne" : new, # Commande pour ajouter un sujet
+    "i" : info_sujet, # Commande pour voir un sujet
 }
 
 # Run the bot with the token
