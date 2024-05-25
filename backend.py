@@ -87,3 +87,9 @@ class Database:
         self.cursor.execute(
             'SELECT * FROM activities a JOIN topics t ON t.id = a.id_topic WHERE id_discord_user = ? AND t.id = ?', (id_discord_user, topic_id))
         return self.cursor.fetchall()
+    
+    def get_topics_levenshtein(self, topic_name):
+        # Get all the topics that are close to the topic_name
+        self.cursor.execute(
+            'SELECT * FROM topics WHERE topic_name LIKE ?', (f'%{topic_name}%',))
+        return self.cursor.fetchall()

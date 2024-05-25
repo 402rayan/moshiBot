@@ -9,6 +9,7 @@ import loguru
 from backend import Database
 from constantes import CONSTANTS
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
 # Create a Discord client instance and set the command prefix
 intents = discord.Intents.all()
@@ -50,7 +51,7 @@ async def on_message(message):
     auteur = message.author
     if auteur == bot.user: # Check if the message is from the bot
         return
-    if not(contenu.startswith('.')):
+    if not(contenu.startswith('@')):
         return
     database.insert_user(auteur.id, auteur.name)
     userFromDb = database.getUser(auteur.id)
@@ -67,7 +68,11 @@ async def on_message(message):
 @bot.command()
 async def new(message, userFromDb):
     # Parse the message to get the sujet
-    sujet = message.content.split(' ')[1]
+    sujet = (" ".join(message.content.split(' ')[1:])).lower()
+    print(sujet)
+    if sujet == "":
+        await message.channel.send(embed=embed_erreur("Arguments invalides", "La commande doit être de la forme `.new <sujet>`."))
+        return
     logger.info(f"Commande !new appelée par {message.author.name} ({message.author.id}).")
     # Check if the sujet already exists
     topic = database.get_topic(sujet)
@@ -81,7 +86,7 @@ async def ajouter_sujet(message, userFromDb, sujet):
     # Envoie un embed de validation pour être sur que l'utilisateur veut ajouter le sujet
     embed = discord.Embed(
         title="Ajouter un sujet",
-        description=f"Voulez-vous vraiment ajouter le sujet `{sujet}` ?",
+        description=f"Voulez-vous vraiment ajouter le sujet `{sujet.capitalize()}` ?",
         color=discord.Color.blurple()
     )
     embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
@@ -106,7 +111,28 @@ async def ajouter_sujet(message, userFromDb, sujet):
     
 @bot.command()
 async def info_sujet(message, userFromDb):
-    pass
+    # Parse the message to get the sujet , the message is in the form ".info <sujet>"
+    # Montre tous les sujets qui ressemblent au sujet
+    sujet = (" ".join(message.content.split(' ')[1:])).lower()
+    if sujet == "":
+        await message.channel.send(embed=embed_erreur("Arguments invalides", "La commande doit être de la forme `.info <sujet>`"))
+        return
+    logger.info(f"Commande !info appelée par {message.author.name} ({message.author.id}).")
+    # Check if the sujet already exists
+    topics = database.get_topics_levenshtein(sujet)
+    if not topics:
+        await message.channel.send(embed=embed_erreur("Sujet inconnu", f"Le sujet '{sujet}' n'existe pas.","Vous pouvez ajouter un sujet avec la commande `.new <sujet>`."))
+        return
+    embed = discord.Embed(
+        title="Sujets similaires",
+        description="",
+        color=discord.Color.blurple()
+    )
+    embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
+    for topic in topics:
+        embed.add_field(name="- " + topic[1].capitalize(), value=f"", inline=False)
+    await message.channel.send(embed=embed)
+    
 
 @bot.command()
 async def add_activity(message, userFromDb):
@@ -221,12 +247,27 @@ async def graphe_activites(message, userFromDb, date_debut, libelle=""):
         await message.channel.send(embed=embed_erreur("Aucune activité", "Aucune activité trouvée pour cet utilisateur à partir de la date spécifiée."))
         return
     plt.figure(figsize=(10, 6))
-    plt.barh(list(duree_par_activite.keys()), list(duree_par_activite.values()), color='#452fd6')
+    # On capitalize tous les nom des sujets
+    duree_par_activite = {key.capitalize(): value for key, value in duree_par_activite.items()}
+    bars = plt.barh(list(duree_par_activite.keys()), list(duree_par_activite.values()), color='#452fd6')
     plt.xlabel("Durée (minutes)", labelpad=10, fontsize=12, fontweight='bold', color='#333333')
     plt.ylabel("Sujet", labelpad=10, fontsize=12, fontweight='bold', color='#333333')
     plt.title("Activités " + libelle)
     plt.xticks(rotation=15)
     plt.tight_layout()
+    for bar in bars:
+        width = bar.get_width()
+        plt.text(width + 1 if width < 50 else width - 15, bar.get_y() + bar.get_height()/2, 
+                f'{bar.get_width()} min', 
+                va='center', ha='left', 
+                fontsize=10, fontweight='bold', color='black')
+        # Changement de la couleur des barres en fonction de la durée
+        color = get_color(bar.get_width())
+        bar.set_color(color)
+        bar.set_edgecolor('#444444')
+
+        
+        
     
     # Sauvegarder le graphique dans un objet BytesIO
     buf = io.BytesIO()
@@ -244,6 +285,25 @@ async def graphe_activites(message, userFromDb, date_debut, libelle=""):
     embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
     embed.set_image(url="attachment://graph.png")
     await message.channel.send(file=file, embed=embed)
+
+
+def get_color(value, min_value=0, max_value=70):
+    """
+    Returns a color based on the value, interpolating between light red, orange, and light green.
+
+    Parameters:
+    value (float): The value to map to a color.
+    min_value (float): The minimum value for the color scale.
+    max_value (float): The maximum value for the color scale.
+
+    Returns:
+    str: The color in hexadecimal format.
+    """
+    norm = mcolors.Normalize(vmin=min_value, vmax=max_value)
+    colors = ['#B52727', '#A6C67E', '#1CC747']  # Light red, orange, light green
+    cmap = mcolors.LinearSegmentedColormap.from_list("", colors)
+    return mcolors.to_hex(cmap(norm(value)))
+
 
 @bot.command()
 async def historique(message, userFromDb):
@@ -272,7 +332,7 @@ async def historique(message, userFromDb):
         duree_par_date[date] += activite[2]
     # Créer un graphique à barres pour les activités
     plt.figure(figsize=(10, 6))
-    plt.barh(list(duree_par_date.keys()), list(duree_par_date.values()), color='#452fd6')
+    plt.barh(list(duree_par_date.keys()), list(duree_par_date.values()), color='#452fd6',edgecolor='black')
     plt.xlabel("Durée (minutes)", labelpad=10, fontsize=12, fontweight='bold', color='#333333')
     plt.ylabel("Date", labelpad=10, fontsize=12, fontweight='bold', color='#333333')
     plt.title(f"Activités {topic[1]}")
