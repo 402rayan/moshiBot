@@ -51,7 +51,7 @@ async def on_message(message):
     auteur = message.author
     if auteur == bot.user: # Check if the message is from the bot
         return
-    if not(contenu.startswith('@')):
+    if not(contenu.startswith('.')):
         return
     database.insert_user(auteur.id, auteur.name)
     userFromDb = database.getUser(auteur.id)
