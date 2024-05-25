@@ -101,7 +101,7 @@ async def ajouter_sujet(message, userFromDb, sujet):
             await message.channel.send(embed=embed_erreur("Opération annulée", "Le sujet n'a pas été ajouté."))
             return False
     except asyncio.TimeoutError:
-        await message.channel.send(embed_erreur("Validation expirée", "Le sujet n'a pas été ajouté."))
+        await message.channel.send(embed=embed_erreur("Validation expirée", "Le sujet n'a pas été ajouté."))
         return False
     
 @bot.command()
@@ -142,6 +142,7 @@ async def add_activity(message, userFromDb):
 async def ajouter_activite(message, userFromDb, topic, duree):
     # Envoie un embed de validation pour être sur que l'utilisateur veut ajouter l'activité
     transition = "de l'" if topic[1][0] in "aeiou" else "du"
+    transition = "des" if topic[-1] == "s"  else transition
     embed = discord.Embed(
         title="Ajouter une activité",
         description=f"Avez-vous passé `{duree} minutes` à effectuer {transition} `{topic[1]}` ? ",
@@ -165,7 +166,7 @@ async def ajouter_activite(message, userFromDb, topic, duree):
             await message.channel.send(embed=embed_erreur("Opération annulée", "L'activité n'a pas été ajoutée."))
             return False
     except asyncio.TimeoutError:
-        await message.channel.send(embed_erreur("Validation expirée", "L'activité n'a pas été ajoutée."))
+        await message.channel.send(embed=embed_erreur("Validation expirée", "L'activité n'a pas été ajoutée."))
         return False
 
 @bot.command()
@@ -204,7 +205,7 @@ async def graphe_activites(message, userFromDb, date_debut, libelle=""):
     activites = database.get_activities(userFromDb[1], date_debut)
     print(activites)
     if not activites:
-        await message.channel.send(embed_erreur("Aucune activité", "Aucune activité trouvée pour cet utilisateur à partir de la date spécifiée."))
+        await message.channel.send(embed=embed_erreur("Aucune activité", "Aucune activité trouvée pour cet utilisateur à partir de la date spécifiée."))
         return
     duree_par_activite = {}
     for activite in activites:
@@ -217,7 +218,7 @@ async def graphe_activites(message, userFromDb, date_debut, libelle=""):
     # Créer un graphique à barres pour les activités
     print(duree_par_activite)
     if duree_par_activite == {}:
-        await message.channel.send(embed_erreur("Aucune activité", "Aucune activité trouvée pour cet utilisateur à partir de la date spécifiée."))
+        await message.channel.send(embed=embed_erreur("Aucune activité", "Aucune activité trouvée pour cet utilisateur à partir de la date spécifiée."))
         return
     plt.figure(figsize=(10, 6))
     plt.barh(list(duree_par_activite.keys()), list(duree_par_activite.values()), color='#452fd6')
@@ -244,6 +245,57 @@ async def graphe_activites(message, userFromDb, date_debut, libelle=""):
     embed.set_image(url="attachment://graph.png")
     await message.channel.send(file=file, embed=embed)
 
+@bot.command()
+async def historique(message, userFromDb):
+    # Parse the subject, the message is in the form ".historique <sujet>"
+    # Get the activities of the user for the subject
+    # Show a graph of the activities by date for the subject
+    sujet = message.content.split(' ')
+    if len(sujet) != 2:
+        await message.channel.send(embed=embed_erreur("Arguments invalides", "La commande doit être de la forme `.historique <sujet>`"))
+        return
+    sujet = sujet[1]
+    topic = database.get_topic_levenshtein(sujet)
+    if not topic:
+        await message.channel.send(embed=embed_erreur("Sujet inconnu", f"Le sujet '{sujet}' n'existe pas.","Vous pouvez ajouter un sujet avec la commande `.new <sujet>`."))
+        return
+    activites = database.get_activities_by_topic(userFromDb[1], topic[0])
+    print(activites)
+    if not activites:
+        await message.channel.send(embed=embed_erreur("Aucune activité", f"Aucune activité trouvée pour le sujet '{topic[1]}'."))
+        return
+    duree_par_date = {}
+    for activite in activites:
+        date = activite[1].split(' ')[0]
+        if date not in duree_par_date:
+            duree_par_date[date] = 0
+        duree_par_date[date] += activite[2]
+    # Créer un graphique à barres pour les activités
+    plt.figure(figsize=(10, 6))
+    plt.barh(list(duree_par_date.keys()), list(duree_par_date.values()), color='#452fd6')
+    plt.xlabel("Durée (minutes)", labelpad=10, fontsize=12, fontweight='bold', color='#333333')
+    plt.ylabel("Date", labelpad=10, fontsize=12, fontweight='bold', color='#333333')
+    plt.title(f"Activités {topic[1]}")
+    plt.xticks(rotation=15)
+    plt.tight_layout()
+    
+    # Sauvegarder le graphique dans un objet BytesIO
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()  # Fermer la figure pour libérer la mémoire
+    
+    # Envoyer le fichier image sur Discord
+    file = discord.File(buf, filename='graph.png')
+    embed = discord.Embed(
+        title=f"Activités {topic[1]}",
+        description="",
+        color=discord.Color.blurple()
+    )
+    embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
+    embed.set_image(url="attachment://graph.png")
+    await message.channel.send(file=file, embed=embed)
+    
 
 def embed_succes(titre, description):
     return embed(titre, description, discord.Color.green())
@@ -328,7 +380,7 @@ async def list_command(message, userFromDb):
             break  # Arrêter la pagination en cas de timeout
 
 commands = {
-    "h" : list_command, # Commande d'aide
+    "hel" : list_command, # Commande d'aide
     "ne" : new, # Commande pour ajouter un sujet
     "i" : info_sujet, # Commande pour voir un sujet
     "ad": add_activity, # Commande pour ajouter une activité
@@ -336,6 +388,7 @@ commands = {
     "we": weekly, # Commande pour voir les activités de la semaine
     "mo": monthly, # Commande pour voir les activités du mois
     "la": last_days, # Commande pour voir les activités des derniers jours
+    "his": historique, # Commande pour voir l'historique d'un sujet
 }
 
 # Run the bot with the token

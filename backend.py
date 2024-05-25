@@ -82,3 +82,8 @@ class Database:
         self.cursor.execute(
             'SELECT * FROM activities a JOIN topics t ON t.id = a.id_topic WHERE id_discord_user = ? AND date >= ?', (id_discord_user, date_debut))
         return self.cursor.fetchall()
+    
+    def get_activities_by_topic(self, id_discord_user, topic_id):
+        self.cursor.execute(
+            'SELECT * FROM activities a JOIN topics t ON t.id = a.id_topic WHERE id_discord_user = ? AND t.id = ?', (id_discord_user, topic_id))
+        return self.cursor.fetchall()

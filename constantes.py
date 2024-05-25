@@ -9,5 +9,7 @@ CONSTANTS = {
         "`.monthly`": "Permet de voir les activités du mois.",
         # lastdays
         "`.lastdays {nombre}`": "Permet de voir les activités des {nombre} derniers jours.",
+        # historique {sujet}
+        "`.historique {sujet}`": "Permet de voir l'historique de travail d'un sujet.",
     },
 }
