@@ -216,6 +216,9 @@ async def graphe_activites(message, userFromDb, date_debut, libelle=""):
         print(duree_par_activite, activite[6], activite[2])
     # Créer un graphique à barres pour les activités
     print(duree_par_activite)
+    if duree_par_activite == {}:
+        await message.channel.send(embed_erreur("Aucune activité", "Aucune activité trouvée pour cet utilisateur à partir de la date spécifiée."))
+        return
     plt.figure(figsize=(10, 6))
     plt.barh(list(duree_par_activite.keys()), list(duree_par_activite.values()), color='#452fd6')
     plt.xlabel("Durée (minutes)", labelpad=10, fontsize=12, fontweight='bold', color='#333333')
