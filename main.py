@@ -168,7 +168,7 @@ async def add_activity(message, userFromDb):
 async def ajouter_activite(message, userFromDb, topic, duree):
     # Envoie un embed de validation pour être sur que l'utilisateur veut ajouter l'activité
     transition = "de l'" if topic[1][0] in "aeiou" else "du"
-    transition = "des" if topic[-1] == "s"  else transition
+    transition = "des" if topic[1][-1] == "s"  else transition
     embed = discord.Embed(
         title="Ajouter une activité",
         description=f"Avez-vous passé `{duree} minutes` à effectuer {transition} `{topic[1]}` ? ",
@@ -257,7 +257,7 @@ async def graphe_activites(message, userFromDb, date_debut, libelle=""):
     plt.tight_layout()
     for bar in bars:
         width = bar.get_width()
-        plt.text(width + 1 if width < 50 else width - 15, bar.get_y() + bar.get_height()/2, 
+        plt.text(width + 1 if width < 35 else width - 15, bar.get_y() + bar.get_height()/2, 
                 f'{bar.get_width()} min', 
                 va='center', ha='left', 
                 fontsize=10, fontweight='bold', color='black')
