@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import io
+import os
 import getToken
 import discord
 from discord.ext import commands
@@ -16,6 +17,9 @@ intents = discord.Intents.all()
 client = discord.Client(intents=intents)
 logger = loguru.logger
 database = Database('moshi.db')
+
+# Set time zone to Paris
+os.environ['TZ'] = 'Europe/Paris'
 
 bot = commands.Bot(command_prefix='.', intents=intents)
 
@@ -286,6 +290,11 @@ async def graphe_activites(message, userFromDb, date_debut, libelle=""):
     embed.set_image(url="attachment://graph.png")
     await message.channel.send(file=file, embed=embed)
 
+@bot.command()
+async def now(message, userFromDb):
+    # Get the current time and send it to the channel
+    current_time = datetime.datetime.now().strftime("%H:%M:%S")
+    await message.channel.send(embed=embed(f"Il est : {current_time}"))
 
 def get_color(value, min_value=0, max_value=70):
     """
@@ -449,6 +458,7 @@ commands = {
     "mo": monthly, # Commande pour voir les activités du mois
     "la": last_days, # Commande pour voir les activités des derniers jours
     "his": historique, # Commande pour voir l'historique d'un sujet
+    "now" : now, # Commande pour voir l'heure actuelle
 }
 
 # Run the bot with the token
