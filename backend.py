@@ -93,3 +93,11 @@ class Database:
         self.cursor.execute(
             'SELECT * FROM topics WHERE topic_name LIKE ?', (f'%{topic_name}%',))
         return self.cursor.fetchall()
+    
+    # Ajouter 2H à toutes dates de début d'activité
+    def add_2h(self):
+        """self.cursor.execute(
+            'UPDATE activities SET date = datetime(date, "+2 hours")')
+        self.conn.commit()"""
+        pass
+        
