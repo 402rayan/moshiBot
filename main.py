@@ -2,6 +2,8 @@ import asyncio
 import datetime
 import io
 import os
+
+import numpy as np
 import getToken
 import discord
 from discord.ext import commands
@@ -17,6 +19,7 @@ intents = discord.Intents.all()
 client = discord.Client(intents=intents)
 logger = loguru.logger
 database = Database('moshi.db')
+prefixe = "."
 
 # Set time zone to Paris
 os.environ['TZ'] = 'Europe/Paris'
@@ -55,7 +58,7 @@ async def on_message(message):
     auteur = message.author
     if auteur == bot.user: # Check if the message is from the bot
         return
-    if not(contenu.startswith('.')):
+    if not(contenu.startswith(prefixe)):
         return
     database.insert_user(auteur.id, auteur.name)
     userFromDb = database.getUser(auteur.id)
@@ -68,7 +71,57 @@ async def on_message(message):
             await execute_command(func, message, userFromDb)
             break
 
+# Partie nourriture
 
+# Add the new food tracking command
+@bot.command(name='add_nourriture')
+async def add_nourriture(message, userFromDb, nourriture: str, calories: int, proteines: int):
+    # On demande une validation
+    embed = discord.Embed(
+        title="Ajouter un aliment",
+        description=f"Venez vous de manger  `{calories} calories` de `{nourriture.capitalize()}` pour `{proteines}g de protéines`?",
+        color=discord.Color.blurple()
+    )
+    reactions = ["✅", "❌"]
+    embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
+    embed.set_footer(text="✅ : confirmer ❌ : annuler.")
+    sent_message = await message.channel.send(embed=embed)
+    for reaction in reactions:
+        await sent_message.add_reaction(reaction)
+    def check(reaction, user):
+        return user == message.author and str(reaction.emoji) in reactions
+    try:
+        reaction, _ = await bot.wait_for("reaction_add", timeout=35, check=check)
+        if str(reaction.emoji) == "✅":
+            database.insert_food(userFromDb[1], nourriture, calories, proteines)
+            # On envoie un message de succès
+            await message.channel.send(embed=embed_succes("Votre repas a été ajouté", f"L'aliment {nourriture.capitalize()} a été ajouté."))
+        else:
+            await message.channel.send(embed=embed_erreur("Opération annulée", "L'aliment n'a pas été ajouté."))
+    except asyncio.TimeoutError:
+        await message.channel.send(embed=embed_erreur("Validation expirée", "L'aliment n'a pas été ajouté."))
+        
+
+@bot.command()
+async def ajouter_nourriture(message, userFromDb):
+    # Parse the message to get the food, calories and proteins , the message is in the form ".ajouter_nourriture <nourriture>, calories, proteines"
+    contenu = message.content.split(',')
+    if len(contenu) != 3:
+        await message.channel.send(embed=embed_erreur("Arguments invalides", "La commande doit être de la forme `.addFood <nourriture>, calories, proteines`"))
+        return
+    nourriture = contenu[0].split(' ')
+    nourriture = " ".join(nourriture[1:])
+    calories = contenu[1].strip()
+    proteines = contenu[2].strip()
+    if not calories.isdigit() or not proteines.isdigit():
+        await message.channel.send(embed=embed_erreur("Calories ou protéines invalides", "Les calories et les protéines doivent être des nombres entiers."))
+        return
+    if int(calories) <= -1 or int(proteines) <= -1:
+        await message.channel.send(embed=embed_erreur("Calories ou protéines invalides", "Les calories et les protéines doivent être des nombres entiers positifs."))
+        return
+    logger.info(f"Commande !ajouter_nourriture appelée par {message.author.name} ({message.author.id}).")
+    a = await add_nourriture(message, userFromDb, nourriture, calories, proteines)
+    
 @bot.command()
 async def new(message, userFromDb):
     # Parse the message to get the sujet
@@ -205,6 +258,80 @@ async def daily(message, userFromDb):
     await graphe_activites(message, userFromDb, date_debut, "de la journée")
 
 @bot.command()
+async def dailyFood(message, userFromDb):
+    date_debut = datetime.datetime.now().strftime("%Y-%m-%d 00:00:00")
+    await graphe_nourriture(message, userFromDb, date_debut, "de la journée")
+    
+async def graphe_nourriture(message, userFromDb, date_debut, libelle=""):
+    # Retourne un graphe des activités de l'utilisateur à partir de la date de début
+    # On récupère dans la table food les aliments consommés par l'utilisateur where date >= date_debut
+    # On crée un dictionnaire avec les aliments et les calories et les protéines
+    # On crée un graphique à barres pour les aliments avec une partie de la barrre pour les calories et une autre pour les protéines
+    nourriture = database.get_food(userFromDb[1], date_debut)
+    print(nourriture)
+    if not nourriture:
+        await message.channel.send(embed=embed_erreur("Aucun repas", "Aucun repas trouvé pour cet utilisateur à partir de la date spécifiée."))
+        return
+    # Extraction des données nécessaires
+    aliments = [d[3] for d in nourriture]
+    calories = [d[4] for d in nourriture]
+    proteines = [d[5] for d in nourriture]
+
+    # Calcul des ratios protéines/calories
+    # Parfait : 50% protéines : vert
+    ratios = [1 - min(1,(prot / (0.15 * cal))) for prot, cal in zip(proteines, calories)]
+
+    # Création du graphique
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Définition d'une colormap personnalisée allant de vert clair à rouge
+    colors = ["#00FF00", "#FFFF00", "#FF0000"]  # Vert clair, Jaune, Rouge
+    cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", colors)
+
+    # Normalisation des valeurs de ratio pour le gradient
+    norm = plt.Normalize(min(ratios), max(ratios))
+
+    # Dessiner les barres pour les calories avec une couleur dépendante du ratio protéines/calories
+    for i, (aliment, cal, prot, ratio) in enumerate(zip(aliments, calories, proteines, ratios)):
+        bar = ax.barh(i, cal, color=cmap(norm(ratio)), edgecolor='black')
+        # Ajout d'une section dans la barre pour les protéines
+        ax.barh(i, prot, color='#878787', alpha=0.7, edgecolor='black')
+        # On ajoute un label pour les protéines
+        ax.text(prot + 3, i, f'{prot}g', va='center', ha='left', fontsize=10, fontweight='bold', color='black')
+        # On ajoute un label pour les calories
+        ax.text(cal + 3, i, f'{cal} cal', va='center', ha='left', fontsize=10, fontweight='bold', color='black')
+
+    # Personnalisation des axes
+    ax.set_yticks(np.arange(len(aliments)))
+    ax.set_yticklabels(aliments)
+    ax.set_xlabel('Calories et Protéines')
+    ax.set_title('Calories et Protéines par Aliment')
+
+    # Création de la barre de couleur pour les ratios
+    inverse_cmap = mcolors.LinearSegmentedColormap.from_list("inverse_cmap", colors[::-1])
+    sm = plt.cm.ScalarMappable(cmap=inverse_cmap, norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax)
+    cbar.set_label('Ratio Protéines / 15% calories')
+
+    # Sauvegarder le graphique dans un objet BytesIO
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()  # Fermer la figure pour libérer la mémoire
+    
+    # Envoyer le fichier image sur Discord
+    file = discord.File(buf, filename='graph.png')
+    embed = discord.Embed(
+        title="Repas " + libelle,
+        description=f"Total des calories consommées : {sum(calories)}\nTotal des protéines consommées : {sum(proteines)}g",
+        color=discord.Color.blurple()
+    )
+    embed.set_author(name=bot.user.name, icon_url=bot.user.avatar.url)
+    embed.set_image(url="attachment://graph.png")
+    await message.channel.send(file=file, embed=embed)
+
+@bot.command()
 async def weekly(message, userFromDb):
     date_debut = (datetime.datetime.now() - datetime.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
     await graphe_activites(message, userFromDb, date_debut, "de la semaine dernière")
@@ -228,6 +355,21 @@ async def last_days(message, userFromDb):
         return
     date_debut = (datetime.datetime.now() - datetime.timedelta(days=nombre)).strftime("%Y-%m-%d %H:%M:%S")
     await graphe_activites(message, userFromDb, date_debut, f"des {nombre} derniers jours")
+
+@bot.command()
+async def last_days_food(message, userFromDb):
+    # Parse the message to get the number of days
+    nombre = message.content.split(' ')[1]
+    try:
+        nombre = int(nombre)
+    except ValueError:
+        await message.channel.send(embed=embed_erreur("Nombre invalide", "Le nombre de jours doit être un entier."))
+        return
+    if nombre <= 0:
+        await message.channel.send(embed=embed_erreur("Nombre invalide", "Le nombre de jours doit être un entier positif."))
+        return
+    date_debut = (datetime.datetime.now() - datetime.timedelta(days=nombre)).strftime("%Y-%m-%d %H:%M:%S")
+    await graphe_nourriture(message, userFromDb, date_debut, f"des {nombre} derniers jours")
 
 @bot.command()
 async def graphe_activites(message, userFromDb, date_debut, libelle=""):
@@ -452,10 +594,15 @@ commands = {
     "hel" : list_command, # Commande d'aide
     "ne" : new, # Commande pour ajouter un sujet
     "i" : info_sujet, # Commande pour voir un sujet
+    "addf": ajouter_nourriture, # Commande pour ajouter une activité
     "ad": add_activity, # Commande pour ajouter une activité
+    "dailyf" : dailyFood, # Commande pour voir les repas de la journée
     "da": daily, # Commande pour voir les activités de la journée
     "we": weekly, # Commande pour voir les activités de la semaine
     "mo": monthly, # Commande pour voir les activités du mois
+    "ldf": last_days_food, # Commande pour voir les repas des derniers jours,
+    "lastdaysf": last_days_food, # Commande pour voir les repas des derniers jours,
+    "lastdayf": last_days_food, # Commande pour voir les repas des derniers jours,
     "la": last_days, # Commande pour voir les activités des derniers jours
     "his": historique, # Commande pour voir l'historique d'un sujet
     "now" : now, # Commande pour voir l'heure actuelle

@@ -1,3 +1,4 @@
+import datetime
 import sqlite3
 
 
@@ -21,12 +22,18 @@ class Database:
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS activities
             (id INTEGER PRIMARY KEY, date TEXT, duree INTEGER, id_topic INTEGER, id_discord_user INTEGER)''')
         self.conn.commit()
+        
+    def create_food_table(self):
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS food_entries
+            (id INTEGER PRIMARY KEY, date TEXT, user_id INTEGER, nourriture TEXT, calories INTEGER, proteines INTEGER)''')
+        self.conn.commit()
 
     def create_tables(self):
         self.create_user_table()
         self.create_topic_table()
         self.create_activity_table()
-
+        self.create_food_table()
+        
     def insert_user(self, discord_id, discord_name):
         if self.getUser(discord_id) is not None:
             return
@@ -101,3 +108,15 @@ class Database:
         self.conn.commit()"""
         pass
         
+    def insert_food(self, user_id, nourriture, calories, proteines):
+        date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.cursor.execute('''
+            INSERT INTO food_entries (user_id, date, nourriture, calories, proteines)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, date, nourriture, calories, proteines))
+        self.conn.commit()
+        
+    def get_food(self, user_id, date_debut):
+        self.cursor.execute(
+            'SELECT * FROM food_entries WHERE user_id = ? AND date >= ?', (user_id, date_debut))
+        return self.cursor.fetchall()
